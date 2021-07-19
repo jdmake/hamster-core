@@ -13,6 +13,7 @@
             "email": "jdmake@qq.com"
         }
     ],
+    "minimum-stability": "dev",
     "require": {
         "php": "^7.1"
     },

@@ -1,6 +1,6 @@
 {
     "name": "hamster/hamster-core",
-    "description": "The Hamster Core",
+    "description": "The Hamster Core!",
     "keywords": [
         "php",
         "hamster"
@@ -15,7 +15,9 @@
     ],
     "minimum-stability": "dev",
     "require": {
-        "php": "^7.1"
+        "php": "^7.1",
+        "phpoffice/phpexcel": "1.8.x-dev",
+        "symfony/var-dumper": "4.4.x-dev"
     },
     "require-dev": {
         "phpstan/phpstan": "^0.11.8",

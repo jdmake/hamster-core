@@ -30,7 +30,8 @@ class Db
         'parameter' => [],
         'insert_field' => [],
         'insert_values' => [],
-        'update_set' => []
+        'update_set' => [],
+        'sql' => '',
     ];
 
     /** @var int 操作方式 */
@@ -55,17 +56,29 @@ class Db
         $this->connect = $connect;
     }
 
+    public function query($sql)
+    {
+        $this->query = $sql;
+        return $this;
+    }
 
     /**
      * 创建实体
      */
     public static function create(array $config)
     {
-        if (!self::$instance instanceof Db) {
-            self::$instance = new Db(new DbDrive($config));
-        }
+        return new Db(new DbDrive($config));
+    }
 
-        return self::$instance;
+    /**
+     * 创建原生SQL
+     * @param $sql
+     * @return $this
+     */
+    public function createNativeSql($sql)
+    {
+        $this->options['sql'] = $sql;
+        return $this;
     }
 
     /**
@@ -165,13 +178,25 @@ class Db
     public function getResult()
     {
         $this->action_type = Db::ACTION_TYPE_SELECT;
-        $this->buildQuery();
+        $sql = $this->buildQuery();
 
         // 执行查询
         $this->connect->query($this->query, $this->options['parameter']);
         $this->clear();
         $res = $this->connect->getfetchAll();
 
+        return $res;
+    }
+
+    /**
+     * 原始查询
+     */
+    public function select()
+    {
+        // 执行查询
+        $this->connect->query($this->query, $this->options['parameter']);
+        $this->clear();
+        $res = $this->connect->getfetchAll();
         return $res;
     }
 
@@ -226,6 +251,9 @@ class Db
 
     /**
      * 更新数据
+     * @param array $data
+     * @return string
+     * @throws \Exception
      */
     public function update(array $data = [])
     {
@@ -236,6 +264,7 @@ class Db
             $parameter[$name] = "{$value}::{$schema[$name]}";
             $this->options['update_set'][] = "{$name}=:{$name}";
         }
+
         $this->setParameter($parameter);
 
         $this->action_type = Db::ACTION_TYPE_UPDATE;
@@ -267,27 +296,20 @@ class Db
     public function count()
     {
         $this->options['limit'] = '';
-        return count($this->getResult());
+        $this->options['field'] = 'count(' . $this->options['field'] . ') as total';
+        return $this->getResult()[0]['total'];
     }
 
     /**
      * 分页
      */
-    public function pagination($page, $limit = 15, array $option = [])
+    public function pagination($page, $limit = 15, array $option = [], $style)
     {
         $option['return_page'] = isset($option['return_page']) ? $option['return_page'] : true;
 
         $path_info = isset($_SERVER['REQUEST_URI']) ? parse_url($_SERVER['REQUEST_URI'])['path'] : '/';
 
-        $path = '';
-        if (!isset($option['style'])) {
-
-            if(!isset($option['query'])) {
-                $option['query'] = [];
-            }
-
-            $path = isset($option['path']) ? $option['path'] : $path_info . '?do=' . '' . '&' . http_build_query($option['query']);
-        }
+        $path = isset($option['path']) ? $option['path'] : $path_info . '?' . http_build_query(isset($option['query']) ?: []);
 
         $limit_page = ($page == 1 ? 0 : $page - 1) * $limit;
 
@@ -299,54 +321,15 @@ class Db
         $results = $this->connect->getfetchAll();
         $total = $this->count();
 
+        $styleClass = 'Hamster\\Model\\Pagination\\' . ucfirst($style) . 'StylePagination';
+        $styleClass = new $styleClass();
+
         return [
             'items' => $results,
             'pageSize' => ceil($total / $limit),
             'total' => $total,
             'limit' => $limit,
-            'page' => call_user_func(function () use ($path, $page, $total, $limit, $option) {
-                if(isset($option['return_page']) && $option['return_page']) {
-                    $curPage = isset($page) ? $page : 1;
-                    //最大的页码数
-                    $rowsPerPage = 10;
-                    //获取数据
-                    $offset = ($curPage - 1) * $rowsPerPage;
-                    //总页数
-                    $totalpage = ceil($total / $limit);
-                    //存储页面字符串
-                    $pageNumString = '';
-                    if ($curPage <= 5) {
-                        $begin = 1;
-                        $end = $totalpage >= 10 ? 10 : $totalpage;
-                    } else {
-                        $end = $curPage + 5 > $totalpage ? $totalpage : $curPage + 5;
-                        $begin = $end - 9 <= 1 ? 1 : $end - 9;
-                    }
-                    //上一页
-                    $prev = $curPage - 1 <= 1 ? 1 : $curPage - 1;
-                    $pageNumString .= "<li><a href='{$path}" . (!isset($option['style']) ? '&page=1' : str_replace('{page}', '1', $option['style'])) . "'>首页</a></li>";
-                    $pageNumString .= "<li><a href='{$path}" . (!isset($option['style']) ? '&page=' . $prev : str_replace('{page}', $prev, $option['style'])) . "'>上一页</a></li>";
-
-                    //根据起始页与终止页将当前页面的页码显示出来
-                    for ($i = $begin; $i <= $end; $i++) {
-                        //使用if实现高亮显示当前点击的页码
-                        //这是 bootstrap的全局样式
-                        if ($curPage == $i) {
-                            $pageNumString .= "<li class='active'><a href='" . (!isset($option['style']) ? '&page=' . $i : str_replace('{page}', $i, $option['style'])) . "'>$i</a></li>";
-                        } else {
-                            $pageNumString .= "<li><a href='" . (!isset($option['style']) ? '&page=' . $i : str_replace('{page}', $i, $option['style'])) . "'>$i</a></li>";
-                        }
-                    }
-                    //实现下一页
-                    $next = $curPage + 1 >= $totalpage ? $totalpage : $curPage + 1;
-                    $pageNumString .= "<li><a href='" . (!isset($option['style']) ? '&page=' . $next : str_replace('{page}', $next, $option['style'])) . "'>下一页</a></li>";
-                    $pageNumString .= "<li><a href='" . (!isset($option['style']) ? '&page=' . $totalpage : str_replace('{page}', $totalpage, $option['style'])) . "'>尾页</a></li>";
-
-                    return $pageNumString;
-                }else {
-                    return null;
-                }
-            })
+            'page' => $styleClass->getPage($path, $page, $total, $limit, $option)
         ];
     }
 
@@ -366,16 +349,20 @@ class Db
     {
         switch ($this->action_type) {
             case self::ACTION_TYPE_SELECT:
-                $this->query = sprintf(
-                    'select %s from `%s` %s %s where %s %s %s',
-                    $this->options['field'],
-                    $this->options['table'],
-                    $this->options['alias'],
-                    $this->options['join'],
-                    str_replace('and or', 'or', join(' and ', $this->options['where']) ?: '1=1'),
-                    $this->options['order'],
-                    $this->options['limit']
-                );
+                if (empty($this->options['sql'])) {
+                    $this->query = sprintf(
+                        'select %s from `%s` %s %s where %s %s %s',
+                        $this->options['field'],
+                        $this->options['table'],
+                        $this->options['alias'],
+                        $this->options['join'],
+                        str_replace('and or', 'or', join(' and ', $this->options['where']) ?: '1=1'),
+                        $this->options['order'],
+                        $this->options['limit']
+                    );
+                } else {
+                    $this->query = $this->options['sql'] . ' ' . $this->options['order'] . ' ' . $this->options['limit'];
+                }
                 break;
             case self::ACTION_TYPE_INSERT:
                 $this->query = sprintf(
@@ -433,6 +420,10 @@ class Db
 
     public function querySchema()
     {
+        $cache = APP_ROOT . '/resources/cache/data/' . 'query_schema_' . $this->options['table'] . '.php';
+        if (is_file($cache)) {
+            return unserialize(file_get_contents($cache));
+        }
         $this->connect->query("select `COLUMN_NAME`,`DATA_TYPE` from information_schema.columns where table_name='{$this->options['table']}'");
         $res = $this->connect->getfetchAll();
         $result = [];
@@ -441,9 +432,9 @@ class Db
             $result[$re['COLUMN_NAME']] = $re['DATA_TYPE'];
         }
 
-        if(!empty($this->options['join'])) {
+        if (!empty($this->options['join'])) {
             // 获取关联表名称
-            if(preg_match('/join\s+(.*?)\s+on/is', $this->options['join'], $matches)) {
+            if (preg_match('/join\s+(.*?)\s+on/is', $this->options['join'], $matches)) {
                 list($table) = explode(' ', $matches[1]);
                 $this->connect->query("select `COLUMN_NAME`,`DATA_TYPE` from information_schema.columns where table_name='{$table}'");
                 $res = $this->connect->getfetchAll();
@@ -452,7 +443,10 @@ class Db
                 }
             }
         }
-
+        if (!is_dir(APP_ROOT . '/resources/cache/data/')) {
+            mkdirss(APP_ROOT . '/resources/cache/data/');
+        }
+        file_put_contents($cache, serialize($result));
         return $result;
     }
 
@@ -461,7 +455,8 @@ class Db
      * 开始事务
      * @return bool
      */
-    public function beginTransaction() {
+    public function beginTransaction()
+    {
         return $this->connect->beginTransaction();
     }
 
@@ -469,7 +464,8 @@ class Db
      * 提交事务
      * @return bool
      */
-    public function commit() {
+    public function commit()
+    {
         return $this->connect->commitTransaction();
     }
 
@@ -477,7 +473,8 @@ class Db
      * 事务回滚
      * @return bool
      */
-    public function rollBack() {
+    public function rollBack()
+    {
         return $this->connect->rollBackTransaction();
     }
 

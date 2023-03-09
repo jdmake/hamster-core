@@ -6,7 +6,7 @@
 // +----------------------------------------------------------------------
 
 
-namespace Database\Model;
+namespace Hamster\Model;
 
 
 use Hamster\Database\Db;
@@ -28,6 +28,8 @@ abstract class Model implements \JsonSerializable
     /** @var array 模型属性 */
     protected $attribute = [];
 
+    private $pageStyle = 'default';
+
     /**
      * 构造函数
      * Model constructor.
@@ -35,8 +37,12 @@ abstract class Model implements \JsonSerializable
      */
     public function __construct(array $attribute = [])
     {
+        global $app;
+
+        $config = $app['database'];
+
         $this->attribute = $attribute;
-        $this->db = Db::create();
+        $this->db = Db::create($config);
         $this->db->table($this->table);
 
         // 类型转换
@@ -65,6 +71,23 @@ abstract class Model implements \JsonSerializable
             }
         }
 
+    }
+
+    /**
+     * 获取表名
+     */
+    public function getTable()
+    {
+        return $this->table;
+    }
+
+    /**
+     * 获取DB对象
+     * @return Db
+     */
+    public function getDb()
+    {
+        return $this->db;
     }
 
     /**
@@ -132,10 +155,29 @@ abstract class Model implements \JsonSerializable
     {
         $this->db->field('count(*) as count');
         $result = $this->db->getResult();
-        if($result) {
+        if ($result) {
             return intval($result[0]['count']);
         }
         return 0;
+    }
+
+    /**
+     * 设置模型显示字段
+     */
+    public function field($field)
+    {
+        $this->db->field($field);
+        return $this;
+    }
+
+    /**
+     * 设置分页样式
+     * @param $name
+     */
+    public function setPageStyle($name)
+    {
+        $this->pageStyle = $name;
+        return $this;
     }
 
     /**
@@ -143,16 +185,24 @@ abstract class Model implements \JsonSerializable
      * @param $page
      * @param int $limit
      */
-    public function pagination($page, $limit = 10)
+    public function pagination($page, $limit = 10, $return_page = true, $script = false, array $option = [])
     {
+        $option = array_merge([
+            'return_page' => $return_page,
+            'script' => $script,
+        ], $option);
+
         $collection = [];
-        $result = $this->db->pagination($page, $limit > 100 ? 100 : $limit, ['return_page' => false]);
+        $result = $this->db->pagination($page, $limit > 100 ? 100 : $limit, $option, $this->pageStyle);
         if ($result) {
             foreach ($result['items'] as $item) {
                 $collection[] = $this->newInstance($item);
             }
         }
-        $result['items'] = $collection;
+        if($result['total'] <= 0) {
+            $result['page'] = '';
+        }
+        $result['items'] = new Collection($collection);
         return $result;
     }
 
@@ -161,10 +211,22 @@ abstract class Model implements \JsonSerializable
      */
     private function getAttrValue($name)
     {
-        $method = 'getAttr' . ucfirst($name);
+        $new = $name;
+        if (strpos('#' . $new, '_')) {
+            $arr = explode('_', $new);
+            $new = '';
+            foreach ($arr as $item) {
+                $new .= ucfirst($item);
+            }
+        } else {
+            $new = ucfirst($new);
+        }
+
+        $method = 'getAttr' . $new;
         if (method_exists($this, $method)) {
             return $this->$method(isset($this->attribute[$name]) ? $this->attribute[$name] : null, $this->attribute);
         }
+
         return $this->attribute[$name];
     }
 
@@ -206,7 +268,7 @@ abstract class Model implements \JsonSerializable
             if (strtolower($k) == 'or') {
                 $or = [];
                 foreach ($item as $kk => $value) {
-                    $or[] = "{$kk} {$condition} ?";
+                    $or[] = "{$kk} {$condition} :{$kk}";
                     $values[] = [
                         'name' => $kk,
                         'value' => $value
@@ -218,7 +280,7 @@ abstract class Model implements \JsonSerializable
                     'name' => $k,
                     'value' => $item
                 ];
-                $this->db->where("{$k} {$condition} ?");
+                $this->db->where("{$k} {$condition} :{$k}");
             }
         }
 
@@ -231,10 +293,81 @@ abstract class Model implements \JsonSerializable
             if (strpos('#' . $value['name'], '.')) {
                 $value['name'] = explode('.', $value['name'])[1];
             }
-            $parameter[] = "{$value['value']}::{$schema[$value['name']]}";
+            @$parameter[$value['name']] = "{$value['value']}::{$schema[$value['name']]}";
         }
         $this->db->setParameter($parameter);
 
+        return $this;
+    }
+
+    public function likeWhere($field, $value)
+    {
+        $whereStr = '(';
+
+        if (!\is_array($value)) {
+            $value = explode(',', $value);
+        }
+
+        $values = [];
+        foreach ($value as $k => $val) {
+            $whereStr .= "{$field} like :{$field}{$k} or ";
+            $values["{$field}{$k}"] = $val;
+        }
+        $whereStr = trim($whereStr, 'or ') . ')';
+
+        $this->db->where($whereStr);
+
+        $schema = $this->db->querySchema();
+
+        // 设置参数
+        $parameter = [];
+        foreach ($values as $k => $value) {
+            $parameter[$k] = "{$value}::{$schema[$field]}";
+        }
+        $this->db->setParameter($parameter);
+
+        return $this;
+    }
+
+    public function inWhere($field, $value)
+    {
+        if (!\is_array($value)) {
+            $value = explode(',', $value);
+        }
+
+        $whereStr = "{$field} in(";
+        $values = [];
+        foreach ($value as $k => $val) {
+            $whereStr .= ":{$field}{$k},";
+            $values["{$field}{$k}"] = $val;
+        }
+        $whereStr = trim($whereStr, ',');
+        $whereStr .= ')';
+        $this->db->where($whereStr);
+
+        $schema = $this->db->querySchema();
+
+        // 设置参数
+        $parameter = [];
+        foreach ($values as $k => $value) {
+            $parameter[$k] = "{$value}::{$schema[$field]}";
+        }
+        $this->db->setParameter($parameter);
+
+        return $this;
+    }
+    
+    public function whereNotInSelect($field, $select_field, $select_table, $where)
+    {
+        $this->db->where("{$field} Not In(SELECT {$select_field} FROM {$select_table} $where)");
+        return $this;
+    }
+
+    /**
+     * 时间戳查询
+     */
+    public function whereTimestamp($field, $condition, $time) {
+        $this->db->where("UNIX_TIMESTAMP(`{$field}`) {$condition} {$time}");
         return $this;
     }
 
@@ -244,7 +377,7 @@ abstract class Model implements \JsonSerializable
      */
     public function find($pk_value = null)
     {
-        if (!empty($pk_value)) {
+        if (null != $pk_value) {
             $this->where([$this->pk => $pk_value]);
         }
 
@@ -264,6 +397,16 @@ abstract class Model implements \JsonSerializable
     public function exists($id)
     {
         return $this->where([$this->pk => $id])->find();
+    }
+
+    /**
+     * 快速更新
+     * @param array $data
+     * @return string
+     */
+    public function update(array $data)
+    {
+        return $this->db->update($data);
     }
 
     /**
@@ -327,7 +470,7 @@ abstract class Model implements \JsonSerializable
     {
         $result = [];
         foreach ($this->attribute as $k => $item) {
-            $result[$k] = $this->$k;
+            $result[$k] = $this->getAttrValue($k);
         }
         return $result;
     }

@@ -1,5 +1,5 @@
 <?php
-declare(strict_types=1);
+declare(strict_types = 1);
 
 // +----------------------------------------------------------------------
 // | Author: jdmake <503425061@qq.com>
@@ -16,7 +16,7 @@ class Loader
 
     public static function register()
     {
-        spl_autoload_register('Hamster\\Loader::autoload', true, false);
+        spl_autoload_register('Hamster\\Loader\\Loader::autoload', true, false);
     }
 
     /**
@@ -40,7 +40,7 @@ class Loader
     public static function findFile($class)
     {
         foreach (self::$prefixs as $prefix => $path) {
-            if(strstr($class, $prefix)) {
+            if (strstr($class, $prefix)) {
                 $path = $path . str_replace($prefix, '', $class) . '.php';
                 $path = str_replace('\\', DIRECTORY_SEPARATOR, $path);
                 self::inclue($path);
@@ -50,7 +50,12 @@ class Loader
 
     public static function inclue($file)
     {
-
-        return include $file;
+        $arr = pathinfo($file);
+        $file = strtolower($arr['dirname']) . '/' . $arr['basename'];
+        if (file_exists($file)) {
+            return include $file;
+        } else {
+            throw new \Exception(sprintf("文件：%s不存在", $file));
+        }
     }
 }

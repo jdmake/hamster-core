@@ -40,7 +40,9 @@ class DbDrive
         $this->config = array_merge($this->config, $config);
         $conf = $this->config;
         $dsn = "{$conf['db_type']}:host={$conf['host']};port={$conf['port']};dbname={$conf['dbname']};charset={$conf['charset']}";
-        $this->pdo = new \PDO($dsn, $this->config['username'], $this->config['password']);
+        $this->pdo = new \PDO($dsn, $this->config['username'], $this->config['password'], [
+            \PDO::ATTR_PERSISTENT => true
+        ]);
         $this->pdo->setAttribute(\PDO::ATTR_ERRMODE, \PDO::ERRMODE_EXCEPTION);
     }
 
@@ -48,9 +50,12 @@ class DbDrive
     /**
      * 执行SQL查询语句
      * @param $sql
+     * @param array $parameter
+     * @return $this
      */
     public function query($sql, $parameter = [])
     {
+
         // 准备SQL模板
         $this->statement = $this->pdo->prepare($sql);
         // 绑定参数
@@ -58,7 +63,7 @@ class DbDrive
             if (is_int($k)) {
                 $k = $k + 1;
             }
-            if (strstr($item, '::')) {
+            if (strpos('#' . $item, '::')) {
                 list($value, $type) = explode('::', $item);
                 switch ($type) {
                     case 'int':
@@ -68,7 +73,7 @@ class DbDrive
                         $type = \PDO::PARAM_INT;
                         break;
                     case 'datetime':
-                        $type = \PDO::ATTR_DEFAULT_STR_PARAM;
+                        $type = \PDO::PARAM_STR;
                         break;
                     default:
                         $type = \PDO::PARAM_STR;
@@ -185,7 +190,8 @@ class DbDrive
      * 开始事务
      * @return bool
      */
-    public function beginTransaction() {
+    public function beginTransaction()
+    {
         return $this->pdo->beginTransaction();
     }
 
@@ -193,7 +199,8 @@ class DbDrive
      * 提交事务
      * @return bool
      */
-    public function commitTransaction() {
+    public function commitTransaction()
+    {
         return $this->pdo->commit();
     }
 
@@ -201,7 +208,8 @@ class DbDrive
      * 事务回滚
      * @return bool
      */
-    public function rollBackTransaction() {
+    public function rollBackTransaction()
+    {
         return $this->pdo->rollBack();
     }
 

@@ -1,5 +1,5 @@
 <?php
-declare(strict_type=1);
+declare(strict_types=1);
 
 // +----------------------------------------------------------------------
 // | Author: jdmake <503425061@qq.com>
@@ -11,7 +11,6 @@ declare(strict_type=1);
 namespace Hamster\Template;
 
 use Hamster\Util\FileUtil;
-use phpDocumentor\Reflection\Types\True_;
 
 define('HAMSTER_PATH', true);
 
@@ -80,7 +79,14 @@ class Template
      */
     public function render($template, $vars = [])
     {
-        $this->vars = array_merge($this->vars, $vars);
+        global $sidebar, $navbar, $component_title;
+
+
+        $this->vars = array_merge($this->vars, array_merge($vars, [
+            'sidebar' => $sidebar,
+            'navbar' => $navbar,
+            'component_title' => $component_title,
+        ]));
 
         if (!empty($this->config['views_absolute_path'])) {
             $template = $this->config['views_absolute_path'] . $template . $this->config['html_suffix'];
@@ -102,13 +108,14 @@ class Template
         }
 
         extract($vars, EXTR_SKIP);
-        include $cacheFile;
 
         // 页面缓存
         ob_start();
         ob_implicit_flush(0);
+        include $cacheFile;
         // 获取并清空缓存
         $content = ob_get_clean();
+
         return $content;
     }
 
@@ -167,12 +174,13 @@ class Template
      */
     private function parseDefaultTag(&$content)
     {
+
         $content = preg_replace_callback('/' . "{$this->config['var_prefix']}(.*?){$this->config['var_suffix']}" . '/is', function ($matches) {
             $result = trim($matches[1]);
             if (preg_match('/\$([^\s]+)/is', $result, $matches)) {
                 $result = str_replace($matches[0], $this->_setVar($matches[0]), $result);
             }
-            return "<?php echo " . $result . "; ?>";
+            return "<?php echo @" . $result . "; ?>";
         }, $content);
 
 
@@ -199,6 +207,13 @@ class Template
             if (strstr($matches[1], 'include')) {
                 if (preg_match('/\'(.*?)\'/is', trim($matches[1]), $matches)) {
                     $include = trim($matches[1]);
+                    $include = preg_replace_callback('/' . "{$this->config['var_prefix']}(.*?){$this->config['var_suffix']}" . '/is', function ($item) {
+                        $result = trim($item[1]);
+                        if (preg_match('/\$([^\s]+)/is', $result, $matches)) {
+                            $result = str_replace($matches[0], $this->_setVar($matches[0]), $result);
+                        }
+                        return $this->vars[str_replace('$', '', $result)];
+                    }, $include);
                     $cacheFile = $this->includeTmplate($include);
                 }
                 return "<?php include '" . $cacheFile . "'; ?>";
@@ -215,6 +230,14 @@ class Template
      */
     private function includeTmplate($include)
     {
+        if (strpos('#' . $include, '@core')) {
+            $include = str_replace('@core/', '', $include);
+            $this->config['views_absolute_path'] = APP_ROOT . '/vendor/hamster-core/lib/Hamster/View/';
+        } else {
+            $this->config['views_absolute_path'] = APP_ROOT . DIRECTORY_SEPARATOR . 'hamster-' . $GLOBALS['module']
+                . DIRECTORY_SEPARATOR . 'src' . DIRECTORY_SEPARATOR . 'view' . DIRECTORY_SEPARATOR;
+        }
+
         ob_start();
         $this->render($include, $this->vars);
         ob_end_clean();
@@ -242,6 +265,13 @@ class Template
      */
     private function checkCache($cacheFile)
     {
+        global $app;
+
+        // 调试模式下更新缓存文件
+        if ($app['debug']) {
+            return false;
+        }
+
         // 缓存文件不存在
         if (!is_file($cacheFile)) {
             return false;
@@ -297,6 +327,5 @@ class Template
     {
         return preg_replace(["/'/", '/"/'], '', $str);
     }
-
 
 }
